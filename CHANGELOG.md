@@ -10,11 +10,11 @@ Validation passed 40,041 native assertions, checks of `binary_protocol.py` and `
 
 A 192-byte XWR weather notification reached the watch through the iPhone after reconnection. Publisher and watch reports matched sequence `1792456927` and fingerprint `F0A302BE`. The watch accepted one update without ANCS errors, drops or rejections, replaced the embedded snapshot, and retained 24 hourly forecasts and seven daily summaries. The RTC remained trusted. This check established binary delivery and application acceptance; no separate screen or phone lock-state confirmation was recorded, and sustained cadence remains unverified.
 
-The maintained guides now cover the default binary transport, parser use, packet and notification limits, legacy compatibility, and the distinction between structural parsing and watch-side acceptance. Setup and diagnostics separate source JSON, XWR packets, Base64 notification text and LightBlue commands. The protocol examples and implementation diagrams describe the current paths, while delivery notes distinguish the binary test from the earlier locked-phone tests. These documentation changes leave firmware, publisher settings and device state unchanged.
+[relay/PROTOCOL.md](relay/PROTOCOL.md) documents XWR encoding, parser APIs, packet limits and legacy compatibility. The setup and diagnostic examples in [relay/README.md](relay/README.md) and [relay/publisher/README.md](relay/publisher/README.md) cover source JSON, binary packets, Base64 notification bodies and receiver acceptance checks.
 
 ## 2026-10-18
 
-The root [README.md](README.md) now introduces the watch's purpose before setup instructions and categorized implementation tables and diagrams. It covers Windows, macOS and Linux workflows and identifies the driver, Bluetooth, memory and USB changes needed for another board. [project/README.md](project/README.md), [project/LIGHTBLUE.md](project/LIGHTBLUE.md), [relay/README.md](relay/README.md) and [relay/publisher/README.md](relay/publisher/README.md) distinguish current behavior from untested adaptations. This changelog records the corresponding documentation conventions. These documentation edits do not change firmware or the publisher's operating state.
+[README.md](README.md) added Windows, macOS and Linux setup instructions, implementation tables and diagrams, and guidance for adapting the firmware to another board. [project/README.md](project/README.md), [project/LIGHTBLUE.md](project/LIGHTBLUE.md), [relay/README.md](relay/README.md) and [relay/publisher/README.md](relay/publisher/README.md) cover firmware operation, manual Bluetooth commands, notification delivery and publisher setup.
 
 ## 2026-10-16
 
@@ -26,7 +26,7 @@ Phone delivery checks exposed truncation of longer notification bodies at 256 by
 
 [watch_ui.cpp](project/src/watch_ui.cpp) removed the Weather application's current-conditions and snapshot-source header blocks. Both forecast tabs now show only the fetch timestamp as `Updated MM/DD/YY HH:MM:SS`, with a placeholder when that timestamp is absent. The face complication, hourly forecasts, daily summaries, scrolling and return navigation remain in place.
 
-Shared button and forecast-tab styling in [watch_ui.cpp](project/src/watch_ui.cpp) reduced repeated UI setup. Dial updates reuse the local-date conversion for hands and date text, while calendar arithmetic in [watch_model.cpp](project/src/watch_model.cpp) uses a shared validated 32-bit conversion body. Weather normalization in [upload_weather.py](project/tools/upload_weather.py) now uses binary searches over validated timestamps to locate hourly and daily ranges. An explored rewrite of [packed_weather.cpp](project/src/packed_weather.cpp) was discarded, leaving its decoder implementation in place.
+Shared button and forecast-tab styling in [watch_ui.cpp](project/src/watch_ui.cpp) reduced repeated UI setup. Dial updates reuse the local-date conversion for hands and date text, while calendar arithmetic in [watch_model.cpp](project/src/watch_model.cpp) uses a shared validated 32-bit conversion body. Weather normalization in [upload_weather.py](project/tools/upload_weather.py) now uses binary searches over validated timestamps to locate hourly and daily ranges.
 
 ## 2026-10-15
 
@@ -36,7 +36,7 @@ The source-comment convention changed to concise lowercase prose, preserving pro
 
 ## 2026-10-07
 
-A normal PlatformIO upload ran [platformio_weather.py](project/tools/platformio_weather.py) and [upload_weather.py](project/tools/upload_weather.py) to refresh the embedded forecast, then [platformio_rtc.py](project/tools/platformio_rtc.py) and [sync_rtc.py](project/tools/sync_rtc.py) to provision the RTC from computer UTC. The upload retained the existing interface, 24-hour forecasts, seven-day summaries and orientation policy. No application feature changed in this session.
+A normal PlatformIO upload ran [platformio_weather.py](project/tools/platformio_weather.py) and [upload_weather.py](project/tools/upload_weather.py) to refresh the embedded forecast, then [platformio_rtc.py](project/tools/platformio_rtc.py) and [sync_rtc.py](project/tools/sync_rtc.py) to provision the RTC from computer UTC.
 
 ## 2026-10-06
 
@@ -54,7 +54,7 @@ Weather became an upload-time fallback. [project/platformio.ini](project/platfor
 
 The analog clock in [watch_ui.cpp](project/src/watch_ui.cpp) expanded to the round face and adopted a white background, black primary text, red secondary text, black marks and hour/minute hands, and a red second hand. Hour numerals were removed. The battery percentage moved inside its symbol above the center, temperature moved inside the weather symbol to the left, and the date moved below the center. The scrolling launcher in `watch_ui.cpp` gained smaller rows and a fixed return arrow, while [calendar_ui.cpp](project/src/calendar_ui.cpp) added the month-browsable 2026 Calendar.
 
-Date and weather shortcuts in `watch_ui.cpp` gained pressed feedback and direct application navigation. The date separator changed from literal slashes to a line break. A glass-style date container was introduced and subsequently removed, leaving only the date text. Red shortcut outlines gave way to a slight ease-out shrink, and navigation moved to first contact to avoid requiring a second tap. Hit targets remain unscaled, and held contacts cannot activate the following screen. Weather and battery artwork received additional size and placement adjustments during the same session.
+Date and weather shortcuts in `watch_ui.cpp` gained pressed feedback and direct application navigation. The date separator changed from literal slashes to a line break. A glass-style date container was introduced and subsequently removed, leaving only the date text. Red shortcut outlines gave way to a slight ease-out shrink, and navigation moved to first contact to avoid requiring a second tap. Hit targets remain unscaled, and held contacts cannot activate the following screen. The weather and battery symbols in `watch_ui.cpp` received size and placement adjustments.
 
 ## 2026-10-02
 

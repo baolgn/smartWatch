@@ -6,7 +6,7 @@ LightBlue does not fetch weather or set the clock. Normal PlatformIO upload supp
 
 ## Choose the Bluetooth path
 
-The binary relay update leaves the manual command service unchanged. Use the existing ntfy app for recurring weather updates from [publisher.py](../relay/publisher/publisher.py). LightBlue provides manual control and connection diagnostics; it does not convert incoming ntfy messages into Bluetooth writes. [notification_relay.cpp](src/notification_relay.cpp) receives those notifications through Apple's separate ANCS service on the paired iPhone.
+Use the existing ntfy app for recurring weather updates from [publisher.py](../relay/publisher/publisher.py). LightBlue provides manual control and connection diagnostics; it does not convert incoming ntfy messages into Bluetooth writes. [notification_relay.cpp](src/notification_relay.cpp) receives those notifications through Apple's separate ANCS service on the paired iPhone.
 
 | Path | Input and purpose |
 | --- | --- |
