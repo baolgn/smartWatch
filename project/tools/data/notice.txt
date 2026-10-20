@@ -1,0 +1,11 @@
+america_new_york.tzif is an unmodified timezone-data file copied from the
+tzdata 2026.4 Python distribution (tzdata/zoneinfo/America/New_York).
+Source: https://github.com/python/tzdata
+IANA timezone database: https://www.iana.org/time-zones
+
+The tzdata distribution's copyright notice and Apache 2.0 license are retained
+in license.tzdata and license_apache_2_0. No Python package is required at build
+time: Python's standard-library zoneinfo.ZoneInfo.from_file reads this file.
+
+This snapshot supports America/New_York calendar dates and DST transitions.
+Review and replace it from a current tzdata release if timezone law changes.

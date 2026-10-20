@@ -1,0 +1,12 @@
+/* keep editor extensions aligned with the PlatformIO workflow. */
+{
+    /* extension configuration: http://go.microsoft.com/fwlink/?LinkId=827846 */
+    "recommendations": [
+        "platformio.platformio-ide"
+    ],
+    /* suppress alternate IDE and redundant extension-pack suggestions. */
+    "unwantedRecommendations": [
+        "ms-vscode.cpptools-extension-pack",
+        "pioarduino.pioarduino-ide"
+    ]
+}

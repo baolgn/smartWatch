@@ -1,0 +1,8 @@
+{
+  "sources": [
+    {
+      "topic": "weather",
+      "adapter": "weather"
+    }
+  ]
+}
