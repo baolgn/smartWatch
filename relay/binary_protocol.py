@@ -12,9 +12,9 @@ import struct
 import sys
 import zlib
 
-# fit one binary frame inside the tested 256-byte notification path.
+# retain the 256-byte XWR text limit and its 189-byte raw frame bound.
 PREFIX = b"XW1:"
-MAX_NOTIFICATION_BYTES = 256
+MAX_TEXT_BYTES = 256
 MAX_FRAME_BYTES = 189
 MAX_CONTAINERS = 8
 WEATHER_BYTES = 118
@@ -212,36 +212,36 @@ def decode_frame(raw):
     return {"topic": topic, "sequence": sequence, "codec": codec, "payload": payload}
 
 
-# wrap a raw frame in canonical ASCII for ntfy and ANCS transport.
-def encode_notification(topic, sequence, payload, codec=0):
+# wrap a raw frame in canonical ASCII for the Bluetooth UART stream.
+def encode_text(topic, sequence, payload, codec=0):
     body = PREFIX + base64.b64encode(encode_frame(topic, sequence, payload, codec))
-    _require(len(body) <= MAX_NOTIFICATION_BYTES, "notification exceeds 256 bytes")
+    _require(len(body) <= MAX_TEXT_BYTES, "text frame exceeds 256 bytes")
     return body
 
 
 # accept only canonical padded standard Base64 with the XW1 prefix.
-def decode_notification(body):
-    # accept text callers without permitting non-ASCII notification content.
+def decode_text(body):
+    # accept text callers without permitting non-ASCII text frame content.
     if type(body) is str:
         # bound conversion work before ASCII encoding.
-        _require(len(body) <= MAX_NOTIFICATION_BYTES, "notification exceeds 256 bytes")
+        _require(len(body) <= MAX_TEXT_BYTES, "text frame exceeds 256 bytes")
         # convert ASCII without exposing invalid Unicode input.
         try:
             body = body.encode("ascii", "strict")
-        # report encoding errors without including notification contents.
+        # report encoding errors without including text frame contents.
         except UnicodeError:
-            raise ValueCodecError("notification must contain ASCII") from None
-    _require(type(body) is bytes and len(body) <= MAX_NOTIFICATION_BYTES,
-             "invalid notification length or type")
-    _require(body.startswith(PREFIX), "unsupported notification prefix")
+            raise ValueCodecError("text frame must contain ASCII") from None
+    _require(type(body) is bytes and len(body) <= MAX_TEXT_BYTES,
+             "invalid text frame length or type")
+    _require(body.startswith(PREFIX), "unsupported text frame prefix")
     encoded = body[len(PREFIX):]
     # reject invalid characters, padding and incomplete Base64 quartets.
     try:
         raw = base64.b64decode(encoded, validate=True)
     # hide malformed content while retaining a useful parser error.
     except (binascii.Error, ValueError):
-        raise ValueCodecError("invalid notification Base64") from None
-    _require(base64.b64encode(raw) == encoded, "noncanonical notification Base64")
+        raise ValueCodecError("invalid text frame Base64") from None
+    _require(base64.b64encode(raw) == encoded, "noncanonical text frame Base64")
     return decode_frame(raw)
 
 
@@ -259,16 +259,16 @@ def _diagnostic_value(value):
     return value
 
 
-# parse one notification or raw frame from a file or standard input.
+# parse one text frame or raw frame from a file or standard input.
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Parse one XWR v1 relay message.")
     parser.add_argument("file", nargs="?", default="-", help="input file; default: standard input")
     parser.add_argument("--raw", action="store_true", help="read raw binary instead of XW1 text")
     arguments = parser.parse_args(argv)
-    maximum = MAX_FRAME_BYTES if arguments.raw else MAX_NOTIFICATION_BYTES + 2
+    maximum = MAX_FRAME_BYTES if arguments.raw else MAX_TEXT_BYTES + 2
     # limit file reads and never include input or file contents in errors.
     try:
-        # standard input supports piping a single notification.
+        # standard input supports piping a single text frame.
         if arguments.file == "-":
             raw = sys.stdin.buffer.read(maximum + 1)
         # close named files after their bounded read.
@@ -279,7 +279,7 @@ def main(argv=None):
         # allow one terminal line ending for text files and shell pipelines only.
         if not arguments.raw:
             raw = raw[:-2] if raw.endswith(b"\r\n") else raw[:-1] if raw.endswith(b"\n") else raw
-        result = decode_frame(raw) if arguments.raw else decode_notification(raw)
+        result = decode_frame(raw) if arguments.raw else decode_text(raw)
         print(json.dumps(_diagnostic_value(result), ensure_ascii=True, allow_nan=False, indent=2))
         return 0
     # parser failures expose only sanitized validation messages.

@@ -66,7 +66,7 @@ class ProtocolSession {
    * Bluetooth messages cannot set time. */
   ProtocolResult apply(const char* text, size_t length, WatchState& state,
                        uint32_t nowMs);
-  // accept a complete raw XW1 frame without its notification text wrapper.
+  // accept a complete raw XW1 frame without its ASCII text wrapper.
   ProtocolResult applyBinary(const uint8_t* bytes, size_t length, WatchState& state,
                              uint32_t nowMs);
   // clear sequence history on a new BLE session.

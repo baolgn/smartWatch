@@ -1,7 +1,7 @@
 """fetch/embed weather at upload using the Python standard library.
 
 Open-Meteo data: https://open-meteo.com/ (CC BY 4.0).
-this upload fallback also supplies normalization for the PC notification relay.
+this upload fallback also supplies normalization for the PC browser relay.
 """
 from __future__ import annotations
 

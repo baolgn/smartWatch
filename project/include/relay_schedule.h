@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-// optional NUS polling; the active ntfy publisher has its own PC schedule.
+// request NUS refreshes independently of the PC source schedule.
 namespace watch {
 // space connected NUS refresh requests fifteen minutes apart.
 constexpr uint32_t kRelayIntervalMs = 15UL * 60UL * 1000UL;

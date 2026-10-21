@@ -1,13 +1,11 @@
-"""publish XWR binary data through ntfy; sending requires --send."""
+"""fetch bounded JSON sources and encode validated XWR snapshots."""
 from __future__ import annotations
 
-import argparse
 import base64
 import binascii
 import importlib.util
 import json
 import math
-import os
 from pathlib import Path
 import re
 import struct
@@ -17,28 +15,23 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from binary_protocol import ValueCodecError, decode_notification, encode_notification
+from binary_protocol import ValueCodecError, decode_text, encode_text
 
-# share source JSON limits and the watch's notification transport bound.
-TITLE = "XIAO Relay v1"
+# bound source parsing independently of the encoded XWR frame.
 TOPIC_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,31}\Z", re.ASCII)
-CHANNEL_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,64}\Z", re.ASCII)
 MAX_INPUT = 256 * 1024
-MAX_GENERIC = 1024
-MAX_MESSAGE = 256
-MAX_APNS_ESTIMATE = 3500
 MAX_SAFE_INTEGER = 9007199254740991
 MIN_UTC, MAX_UTC = 946684800, 4102444799
 NETWORK_TIMEOUT = 15
 WEATHER_HEADER = struct.Struct("<BIhIhIIII")
 
 
-# expose failures without URLs, channel names or payload contents.
-class PublisherError(ValueError):
+# expose failures without URLs, paths or payload contents.
+class SourceError(ValueError):
     pass
 
 
-# reject redirects instead of forwarding a secret topic or changing origins.
+# reject redirects instead of changing the source origin.
 class NoRedirect(HTTPRedirectHandler):
     # make every redirect a handled HTTP failure.
     def redirect_request(self, request, response, code, message, headers, url):
@@ -47,16 +40,16 @@ class NoRedirect(HTTPRedirectHandler):
 
 # enforce a protocol or transport condition.
 def require(condition, message):
-    # stop before publishing invalid or oversized data.
+    # stop before encoding invalid or oversized data.
     if not condition:
-        raise PublisherError(message)
+        raise SourceError(message)
 
 
 # validate decoded values before deterministic ASCII encoding.
 def validate_value(value, depth=0):
-    # count containers; the enclosing relay envelope consumes one level.
+    # count each nested object and array against the source limit.
     if type(value) in (dict, list):
-        require(depth < 8, "JSON exceeds eight container levels including the envelope")
+        require(depth < 8, "JSON exceeds eight container levels")
         # limit object keys before traversing their contents.
         if type(value) is dict:
             require(len(value) <= 32, "JSON object exceeds 32 keys")
@@ -67,7 +60,7 @@ def validate_value(value, depth=0):
                 validate_value(item, depth + 1)
         # inspect each array element without changing its order.
         else:
-            # bound work before the payload and notification byte checks.
+            # bound traversal before the encoded frame size check.
             require(len(value) <= 4096, "JSON array exceeds 4,096 entries")
             # validate every array value recursively.
             for item in value:
@@ -102,7 +95,7 @@ def parse_json(raw):
 
     # reject Python's optional nonstandard JSON number tokens.
     def invalid_constant(_value):
-        raise PublisherError("JSON numbers must be finite")
+        raise SourceError("JSON numbers must be finite")
 
     # translate parser and encoding failures without exposing source data.
     try:
@@ -112,20 +105,13 @@ def parse_json(raw):
         return value
     # deeply nested or excessively long numeric inputs are invalid too.
     except (UnicodeError, json.JSONDecodeError, RecursionError, OverflowError) as error:
-        raise PublisherError("Malformed UTF-8 JSON") from error
+        raise SourceError("Malformed UTF-8 JSON") from error
     # keep deliberate validation messages but hide Python's source excerpts.
     except ValueError as error:
         # preserve errors already sanitized by this module.
-        if isinstance(error, PublisherError):
+        if isinstance(error, SourceError):
             raise
-        raise PublisherError("Malformed JSON number") from error
-
-
-# serialize Unicode as escapes, including DEL, with no real line breaks.
-def ascii_json(value):
-    validate_value(value)
-    return json.dumps(value, ensure_ascii=True, allow_nan=False,
-                      separators=(",", ":")).encode("ascii")
+        raise SourceError("Malformed JSON number") from error
 
 
 # require HTTPS without embedded credentials or fragments.
@@ -141,12 +127,12 @@ def validate_url(url):
     # invalid ports and host syntax may fail inside urlsplit.
     except ValueError as error:
         # preserve safe validation errors.
-        if isinstance(error, PublisherError):
+        if isinstance(error, SourceError):
             raise
-        raise PublisherError("Invalid source URL") from error
+        raise SourceError("Invalid source URL") from error
 
 
-# perform one bounded HTTPS request; never retry an uncertain publish.
+# fetch one HTTPS response within byte and elapsed-time limits.
 def request_bytes(request, maximum):
     deadline = time.monotonic() + NETWORK_TIMEOUT
     # do not follow redirects or log request URLs.
@@ -168,24 +154,24 @@ def request_bytes(request, maximum):
         return bytes(raw)
     # expose status codes, never exception strings containing private URLs.
     except HTTPError as error:
-        raise PublisherError("HTTP request failed with status %d" % error.code) from error
+        raise SourceError("HTTP request failed with status %d" % error.code) from error
     # retain cached watch data when a network request fails.
     except (URLError, OSError, TimeoutError) as error:
-        raise PublisherError("HTTPS request failed or timed out") from error
+        raise SourceError("HTTPS request failed or timed out") from error
 
 
 # fetch and validate a generic JSON source once.
 def fetch_json(url):
     validate_url(url)
-    request = Request(url, headers={"User-Agent": "XIAO-Notification-Relay/1",
+    request = Request(url, headers={"User-Agent": "XIAO-Watch-Relay/1",
                                    "Accept": "application/json"})
     return parse_json(request_bytes(request, MAX_INPUT))
 
 
 # import the existing upload normalizer and its bundled New York TZif data.
 def weather_module():
-    path = Path(__file__).resolve().parents[2] / "project" / "tools" / "upload_weather.py"
-    require(path.is_file(), "Run this publisher inside the watch workspace")
+    path = Path(__file__).resolve().parents[1] / "project" / "tools" / "upload_weather.py"
+    require(path.is_file(), "Run the relay inside the watch workspace")
     spec = importlib.util.spec_from_file_location("watch_upload_weather", path)
     require(spec is not None and spec.loader is not None, "Weather adapter cannot be loaded")
     module = importlib.util.module_from_spec(spec)
@@ -213,12 +199,12 @@ def fetch_weather():
     # normalize only after the fresh response arrives; never reuse a cache.
     try:
         return adapter.normalize(provider, int(time.time()))
-    # provider validation messages contain no source/channel secrets.
+    # retain the normalizer's sanitized validation message.
     except adapter.WeatherError as error:
-        raise PublisherError("Weather validation failed: " + str(error)) from error
+        raise SourceError("Weather validation failed: " + str(error)) from error
 
 
-# preserve a complete normalized forecast in the observed ANCS size limit.
+# encode the complete normalized forecast in 118 bytes.
 def pack_weather(snapshot):
     adapter = weather_module()
     fields = {"generatedAt", "offsetSeconds", "nextTransitionUtc", "nextOffsetSeconds",
@@ -302,17 +288,17 @@ def pack_weather(snapshot):
     return payload
 
 
-# reject malformed packed weather before canonical envelope publication.
+# reject malformed packed weather before encoding its XWR envelope.
 def validate_packed_weather(payload):
     require(type(payload) is dict and set(payload) == {"packed"}
-            and type(payload["packed"]) is str, "Weather notifications require one packed field")
+            and type(payload["packed"]) is str, "Packed weather requires one packed field")
     encoded = payload["packed"]
     # strict decoding also rejects non-ASCII text, whitespace and extra padding.
     try:
         raw = base64.b64decode(encoded, validate=True)
     # hide payload contents when decoding fails.
     except (ValueError, binascii.Error) as error:
-        raise PublisherError("Packed weather must use canonical Base64") from error
+        raise SourceError("Packed weather must use canonical Base64") from error
     require(len(raw) == 118 and base64.b64encode(raw).decode("ascii") == encoded,
             "Packed weather must decode to 118 bytes using canonical Base64")
     # validate version, UTC offsets and current/hourly coverage.
@@ -366,242 +352,47 @@ def validate_packed_weather(payload):
         daily = end
 
 
-# conservatively estimate ntfy's APNS message with bounded metadata padding.
-def estimate_apns(body):
-    message = body.decode("ascii")
-    preview = message if len(message) <= 100 else message[:97] + "..."
-    payload = {"aps": {"mutable-content": 1, "alert": {"title": TITLE, "body": preview}},
-               "id": "x" * 32, "sequence_id": "x" * 64, "time": MAX_UTC,
-               "event": "message", "topic": "x" * 64, "priority": 3,
-               "title": TITLE, "message": message, "content_type": "text/plain"}
-    return len(json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("ascii"))
-
-
-# match the watch's FNV-1a fingerprint without disclosing message contents.
-def body_fingerprint(body):
-    fingerprint = 2166136261
-    # include every byte with the firmware's unsigned 32-bit wraparound.
-    for byte in body:
-        fingerprint = ((fingerprint ^ byte) * 16777619) & 0xFFFFFFFF
-    return fingerprint
-
-
-# build a binary envelope, retaining JSON only for older firmware migration.
-def envelope(topic, payload, sequence=None, wire_format="binary"):
+# encode source data as one canonical XWR text envelope.
+def envelope(topic, payload, sequence=None):
     require(type(topic) is str and TOPIC_PATTERN.fullmatch(topic) is not None,
             "Topic must match the watch's 1-32 character topic format")
     sequence = int(time.time()) if sequence is None else sequence
     require(type(sequence) is int and MIN_UTC <= sequence <= MAX_UTC,
             "Computer UTC is outside the supported RTC range")
-    require(wire_format in ("binary", "json"), "Unsupported wire format")
-    # keep legacy JSON within its original cache bound.
-    if topic != "weather" and wire_format == "json":
-        require(len(ascii_json(payload)) <= MAX_GENERIC, "Generic payload exceeds 1,024 ASCII bytes")
-    # weather uses its lossless compact adapter on the notification route.
-    elif topic == "weather":
+    # weather retains its lossless compact representation inside codec 1.
+    if topic == "weather":
         validate_packed_weather(payload)
-    # encode binary fields once; Base64 adapts bytes to notification text.
-    if wire_format == "binary":
-        raw_payload = base64.b64decode(payload["packed"]) if topic == "weather" else payload
-        # expose codec failures through the publisher's sanitized error path.
-        try:
-            body = encode_notification(topic, sequence, raw_payload, codec=int(topic == "weather"))
-        # malformed or oversized values must never reach the network.
-        except ValueCodecError as error:
-            raise PublisherError("Binary protocol: " + str(error)) from error
-    # preserve an explicit migration option without changing old receivers.
-    else:
-        body = ascii_json({"v": 1, "type": "data", "seq": sequence, "topic": topic, "payload": payload})
-    # cap the complete body and notification metadata independently.
-    require(len(body) <= MAX_MESSAGE, "Notification body exceeds the observed 256-byte ANCS limit")
-    require(estimate_apns(body) <= MAX_APNS_ESTIMATE, "Escaped notification exceeds APNS safety budget")
-    return body
+        payload = base64.b64decode(payload["packed"])
+    # translate codec failures without exposing source values.
+    try:
+        return encode_text(topic, sequence, payload, codec=int(topic == "weather"))
+    except ValueCodecError as error:
+        raise SourceError("Binary protocol: " + str(error)) from error
 
 
-# parse and revalidate either supported publication format before sending.
+# decode and revalidate a canonical XWR envelope before serving it.
 def decode_envelope(body):
-    # decode the binary packet before weather validation or metadata logging.
-    if type(body) is bytes and body.startswith(b"XW1:"):
-        # keep parser errors free of message contents.
-        try:
-            frame = decode_notification(body)
-        # match the caller's ordinary validation failure handling.
-        except ValueCodecError as error:
-            raise PublisherError("Binary protocol: " + str(error)) from error
-        payload = frame["payload"]
-        # reuse complete weather validation without reparsing source JSON.
-        if frame["codec"] == 1:
-            payload = {"packed": base64.b64encode(payload).decode("ascii")}
-        decoded = {"v": 1, "type": "data", "seq": frame["sequence"],
-                   "topic": frame["topic"], "payload": payload}
-        wire_format = "binary"
-    # older firmware may still receive the original JSON envelope explicitly.
-    else:
-        decoded = parse_json(body)
-        require(type(decoded) is dict and set(decoded) == {"v", "type", "seq", "topic", "payload"}
-                and decoded["v"] == 1 and type(decoded["v"]) is int and decoded["type"] == "data",
-                "Only complete v1 data envelopes may be published")
-        wire_format = "json"
-    require(body == envelope(decoded["topic"], decoded["payload"], decoded["seq"], wire_format),
-            "Publish input must be the canonical validated envelope")
-    return decoded
-
-
-# publish once to the user-selected random channel without echoing its name.
-def publish(body, channel):
-    require(type(channel) is str and CHANNEL_PATTERN.fullmatch(channel) is not None,
-            "Set NTFY_TOPIC to a random 32-64 character channel using letters, digits, _ or -")
-    decoded = decode_envelope(body)
-    age = int(time.time()) - decoded["seq"]
-    require(-300 <= age <= 900, "Do not publish stale or future-dated envelopes")
-    # submit once and verify ntfy echoes the complete message.
-    request = Request("https://ntfy.sh/" + channel, data=body, method="POST",
-                      headers={"Title": TITLE, "Priority": "3", "Content-Type": "text/plain",
-                               "User-Agent": "XIAO-Notification-Relay/1"})
-    result = parse_json(request_bytes(request, 16384))
-    require(type(result) is dict and result.get("event") == "message"
-            and result.get("topic") == channel and result.get("title") == TITLE
-            and result.get("message") == body.decode("ascii") and result.get("priority", 3) == 3,
-            "Publish response did not confirm the complete message; do not retry blindly")
-
-
-# validate a bounded list of independent sources without accepting credentials.
-def source_config(path):
-    config = read_json_file(path)
-    require(type(config) is dict and set(config) == {"sources"}
-            and type(config["sources"]) is list and 1 <= len(config["sources"]) <= 8,
-            "Config must contain one to eight sources")
-    topics = set()
-    # each source owns one unique topic within the watch's eight-topic limit.
-    for source in config["sources"]:
-        require(type(source) is dict, "Each configured source must be an object")
-        topic = source.get("topic")
-        require(type(topic) is str and TOPIC_PATTERN.fullmatch(topic) is not None
-                and topic not in topics, "Configured topics must be valid and unique")
-        topics.add(topic)
-        # use the shared normalizer for the reserved weather topic only.
-        if source.get("adapter") == "weather":
-            require(source == {"topic": "weather", "adapter": "weather"},
-                    "Weather source must contain only its topic and adapter")
-        # other sources are public HTTPS JSON values with their own schemas.
-        else:
-            require(set(source) == {"topic", "url"} and topic != "weather"
-                    and type(source["url"]) is str, "Generic source requires topic and HTTPS URL")
-            validate_url(source["url"])
-    return config["sources"]
+    # keep parser errors free of message contents.
+    try:
+        frame = decode_text(body)
+    except ValueCodecError as error:
+        raise SourceError("Binary protocol: " + str(error)) from error
+    payload = frame["payload"]
+    # expose compact weather in the shared validator's expected representation.
+    if frame["codec"] == 1:
+        payload = {"packed": base64.b64encode(payload).decode("ascii")}
+    require(body == envelope(frame["topic"], payload, frame["sequence"]),
+            "Input must be the canonical validated envelope")
+    return {"v": 1, "type": "data", "seq": frame["sequence"],
+            "topic": frame["topic"], "payload": payload}
 
 
 # read one bounded UTF-8 JSON file without exposing its path or contents.
 def read_json_file(path):
-    # preserve only sanitized local I/O failures.
+    # cap allocation even if the input file is unexpectedly large.
     try:
-        # cap allocation even if the input file is unexpectedly large.
         with Path(path).open("rb") as source:
             raw = source.read(MAX_INPUT + 1)
-    # report missing or inaccessible input without printing user paths.
     except OSError as error:
-        raise PublisherError("Cannot read the JSON input file") from error
+        raise SourceError("Cannot read the JSON input file") from error
     return parse_json(raw)
-
-
-# collect explicit CLI settings; default operation is a weather dry run.
-def arguments(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--weather", action="store_true", help="use ZIP 10018 weather (default)")
-    group.add_argument("--url", help="fetch a generic HTTPS JSON source")
-    group.add_argument("--file", help="read a generic UTF-8 JSON payload")
-    group.add_argument("--config", help="read a sources configuration JSON file")
-    parser.add_argument("--topic", help="generic payload topic; weather is reserved")
-    parser.add_argument("--output", help="write one text-wrapped frame per line to this file")
-    parser.add_argument("--wire-format", choices=("binary", "json"), default="binary",
-                        help="use XWR binary (default), or JSON for older firmware")
-    parser.add_argument("--send", action="store_true", help="publish through NTFY_TOPIC")
-    parser.add_argument("--interval", type=int, choices=[900], help="explicitly repeat every 900 seconds")
-    return parser.parse_args(argv)
-
-
-# assemble one fresh message per selected source.
-def messages(options):
-    # configuration and weather use fixed topics rather than a CLI override.
-    require(not options.topic or options.url is not None or options.file is not None,
-            "Use --topic only with --url or --file")
-    # fetch all configured sources before any message is sent.
-    if options.config:
-        sources = source_config(options.config)
-        # keep an explicit continuous run below ntfy's 250/day free quota.
-        require(options.interval is None or len(sources) <= 2,
-                "A free 15-minute loop supports at most two sources (192 messages/day)")
-        result = []
-        # preserve source order for deterministic logs and publication.
-        for source in sources:
-            payload = pack_weather(fetch_weather()) if source.get("adapter") == "weather" else fetch_json(source["url"])
-            result.append(envelope(source["topic"], payload, wire_format=options.wire_format))
-        return result
-    # require a non-reserved topic for raw generic input.
-    if options.url is not None or options.file is not None:
-        require(options.topic is not None and options.topic != "weather",
-                "Generic input requires --topic; use --weather for complete weather")
-        payload = fetch_json(options.url) if options.url is not None else read_json_file(options.file)
-        return [envelope(options.topic, payload, wire_format=options.wire_format)]
-    # use fresh packed weather when no generic source was selected.
-    return [envelope("weather", pack_weather(fetch_weather()), wire_format=options.wire_format)]
-
-
-# run explicitly; dry runs never publish or start a background service.
-def main(argv=None):
-    options = arguments(argv)
-    # keep channel access and network work inside controlled error reporting.
-    try:
-        require(options.interval is None or options.send,
-                "Repeated operation requires --send; dry runs execute once")
-        channel = os.environ.get("NTFY_TOPIC", "")
-        # reject missing channels before fetching if publication is requested.
-        if options.send:
-            require(CHANNEL_PATTERN.fullmatch(channel) is not None,
-                    "Set NTFY_TOPIC to a random 32-64 character channel before --send")
-        # repeat only when the user explicitly requested a foreground loop.
-        while True:
-            started = time.monotonic()
-            # network failures preserve watch data and retry at the next interval.
-            try:
-                bodies = messages(options)
-                # save data only to the explicit output file; never include secrets.
-                if options.output:
-                    Path(options.output).write_bytes(b"\n".join(bodies) + b"\n")
-                # publish validated messages, then report only non-sensitive counts.
-                for body in bodies:
-                    # every send remains an explicit user-selected action.
-                    if options.send:
-                        publish(body, channel)
-                    # log sequence, topic and fingerprint without payload contents.
-                    metadata = decode_envelope(body)
-                    status = "published; watch acceptance unverified" if options.send else "dry run; not published"
-                    print("%s: seq=%d topic=%s body_bytes=%d body_hash=%08X estimated_apns_bytes=%d" %
-                          (status, metadata["seq"], metadata["topic"], len(body),
-                           body_fingerprint(body), estimate_apns(body)), flush=True)
-            # keep an explicit loop alive across transient failures.
-            except (PublisherError, OSError) as error:
-                # a one-shot failure must remain visible to Task Scheduler.
-                if options.interval is None:
-                    raise
-                message = str(error) if isinstance(error, PublisherError) else "Local input/output failed"
-                print("error: " + message + "; next attempt in 15 minutes", file=sys.stderr, flush=True)
-            # finish after one invocation unless a loop was requested.
-            if options.interval is None:
-                return 0
-            time.sleep(max(1, options.interval - (time.monotonic() - started)))
-    # Ctrl+C stops the explicit foreground loop without creating a service.
-    except KeyboardInterrupt:
-        print("stopped", file=sys.stderr)
-        return 130
-    # hide path/URL details while making scheduler failures visible.
-    except (PublisherError, OSError) as error:
-        message = str(error) if isinstance(error, PublisherError) else "Local input/output failed"
-        print("error: " + message, file=sys.stderr)
-        return 1
-
-
-# importable helpers do not fetch or publish data.
-if __name__ == "__main__":
-    raise SystemExit(main())

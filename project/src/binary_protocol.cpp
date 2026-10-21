@@ -293,7 +293,7 @@ bool parseBinaryFrame(const uint8_t* data, size_t length, BinaryEnvelope& envelo
   return true;
 }
 
-// decode the notification-safe text wrapper with canonical Base64 padding.
+// decode the ASCII text wrapper with canonical Base64 padding.
 bool parseBinaryText(const char* text, size_t length, uint8_t* storage,
                      size_t capacity, BinaryEnvelope& envelope) {
   envelope = BinaryEnvelope{};

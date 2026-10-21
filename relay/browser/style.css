@@ -1,0 +1,42 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #000000;
+  background: #ffffff;
+  line-height: 1.5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 46rem; padding: 2rem 1.25rem 3rem; margin: auto; }
+header { margin-bottom: 2rem; }
+h1 { margin: 0 0 .5rem; font-size: 2rem; line-height: 1.2; }
+h2 { font-size: 1.2rem; margin-top: 0; }
+p { margin: .75rem 0; }
+.eyebrow { color: #ff0000; font-size: .85rem; font-weight: 650; }
+section { border-top: 1px solid #dddddd; padding-top: 1.5rem; margin-top: 1.5rem; }
+label { display: block; font-weight: 600; margin-top: 1.25rem; }
+input {
+  display: block; width: 100%; margin-top: .5rem; padding: .75rem;
+  border: 1px solid #888888; border-radius: .35rem; font-size: 1rem;
+  background: #ffffff; color: #000000;
+}
+button {
+  border: 1px solid #000000; border-radius: .35rem; padding: .7rem 1rem;
+  color: #ffffff; background: #000000; font: inherit; cursor: pointer;
+  min-height: 44px;
+}
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 3px solid #ff0000; outline-offset: 3px; }
+button:active:not(:disabled) { transform: scale(.98); }
+.actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: 1rem; }
+#disconnect, #refresh { background: #ffffff; color: #000000; }
+.hint { font-size: .85rem; color: #444444; }
+#status { min-height: 3rem; padding-top: .5rem; }
+#status[data-error="true"] { color: #b00000; }
+.table_scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; text-align: left; font-size: .9rem; }
+th, td { border-bottom: 1px solid #dddddd; padding: .75rem .5rem; vertical-align: top; }
+td:first-child { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  button:active:not(:disabled) { transform: none; }
+}
