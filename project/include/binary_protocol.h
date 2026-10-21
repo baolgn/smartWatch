@@ -6,7 +6,7 @@
 // bounded XW1 framing and allocation-free typed payload views.
 namespace watch {
 
-// notification text includes the prefix and canonical padded Base64.
+// bounded relay text includes the prefix and canonical padded Base64.
 constexpr size_t kMaxBinaryTextBytes = 256;
 constexpr size_t kMaxBinaryFrameBytes = 189;
 constexpr size_t kBinaryTopicBytes = 32;

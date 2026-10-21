@@ -2,9 +2,9 @@
 
 This project combines a Seeed Studio XIAO nRF52840 Sense with the Round Display for XIAO to keep time locally and show information received through a phone. The watch presents an analog face, a clock application, weather forecasts and a calendar. The intended information set covers time, date, year, day of week, weather, temperature, watch battery level and soccer information. Soccer data and its interface remain unimplemented.
 
-The display's PCF8563 calendar RTC maintains UTC independently of the phone. During firmware upload, [platformio_weather.py](project/tools/platformio_weather.py) calls [upload_weather.py](project/tools/upload_weather.py) to fetch and embed weather. The optional [publisher.py](relay/publisher/publisher.py) delivers subsequent updates using the project's XWR v1 binary protocol through ntfy, an iPhone and Bluetooth. The format supports typed generic data and a compact weather representation. [binary_protocol.py](relay/publisher/binary_protocol.py) and [binary_protocol.cpp](project/src/binary_protocol.cpp) validate the same packet structure. The watch has no direct internet connection. Its stored forecast has a finite lifetime.
+The display's PCF8563 calendar RTC maintains UTC independently of the phone. During firmware upload, [platformio_weather.py](project/tools/platformio_weather.py) calls [upload_weather.py](project/tools/upload_weather.py) to fetch and embed weather. For subsequent updates, [server.py](relay/browser/server.py) serves XWR v1 binary packets through a private Tailscale HTTPS connection to the existing Bluefy iPhone browser. [relay_client.js](relay/browser/relay_client.js) forwards the packets to the watch through Bluetooth Nordic UART. [binary_protocol.py](relay/binary_protocol.py) and [binary_protocol.cpp](project/src/binary_protocol.cpp) validate the same typed data format. The watch has no direct internet connection. Its stored forecast has a finite lifetime.
 
-PlatformIO manages the firmware, Arduino framework and pinned dependencies. The configured and physically exercised target is the XIAO nRF52840 Sense with the Round Display. Windows has been used for builds, uploads and the scheduled publisher. The instructions below cover the corresponding macOS and Linux workflows, which have not been validated on this project. Other boards require the adaptations described under [Board adaptation](#board-adaptation).
+PlatformIO manages the firmware, Arduino framework and pinned dependencies. The configured and physically exercised target is the XIAO nRF52840 Sense with the Round Display. Windows has been used for builds, uploads and the PC relay server. The instructions below cover the corresponding macOS and Linux workflows, which have not been validated on this project. Other boards require the adaptations described under [Board adaptation](#board-adaptation).
 
 ## Instructions
 
@@ -18,7 +18,7 @@ Keep both KE switches on for this configuration. Switch 1 connects A0 to the bat
 
 ### Development environment on Windows, macOS and Linux
 
-Install Git and the desktop version of Visual Studio Code, then install the official [PlatformIO IDE extension](https://docs.platformio.org/en/latest/integration/ide/vscode.html). Allow its PlatformIO Core setup to finish. Git must be available because the platform and two libraries are pinned to repository commits. Linux installations need Python virtual-environment support; Debian and Ubuntu provide it through `python3-venv`. Use Python 3.9 or newer for `upload_weather.py`, `sync_rtc.py` and `publisher.py`; the [pinned platform](https://raw.githubusercontent.com/Seeed-Studio/platform-seeedboards/fe48609c542e3c66173def2e89ca1fb92058300d/platform.json) requires PlatformIO Core 6.1.16 or newer. Open the [project](project/) directory, which contains [platformio.ini](project/platformio.ini), and open the PlatformIO Core CLI terminal. Run the firmware commands in this section from that directory.
+Install Git and the desktop version of Visual Studio Code, then install the official [PlatformIO IDE extension](https://docs.platformio.org/en/latest/integration/ide/vscode.html). Allow its PlatformIO Core setup to finish. Git must be available because the platform and two libraries are pinned to repository commits. Linux installations need Python virtual-environment support; Debian and Ubuntu provide it through `python3-venv`. Use Python 3.9 or newer for `upload_weather.py`, `sync_rtc.py` and `server.py`; the [pinned platform](https://raw.githubusercontent.com/Seeed-Studio/platform-seeedboards/fe48609c542e3c66173def2e89ca1fb92058300d/platform.json) requires PlatformIO Core 6.1.16 or newer. Open the [project](project/) directory, which contains [platformio.ini](project/platformio.ini), and open the PlatformIO Core CLI terminal. Run the firmware commands in this section from that directory.
 
 The same `pio` commands apply in PowerShell, macOS Terminal and a Linux shell when PlatformIO's executable is on the terminal's path. A default extension installation places the executables at the locations below. Custom installations can use different paths; `pio system info` identifies the active Python environment. PlatformIO documents [shell integration](https://docs.platformio.org/en/latest/core/installation/shell-commands.html) separately.
 
@@ -96,34 +96,59 @@ The build outputs appear under `project/.pio/build/seeed_xiao_nrf52840_sense/`. 
 
 Hold the screen upward to wake the white interface. Tap an unused part of the face to open the scrolling launcher, or tap the date and weather complications to open their applications directly. The shortcuts shrink briefly before navigation. Return arrows lead from an application to the launcher and from the launcher to the face. Calendar navigation stays within 2026. Weather provides separate 24-hour and seven-day tabs with scrollable forecasts.
 
-The Weather header displays the data's fetch time as `Updated MM/DD/YY HH:MM:SS`. It does not substitute the running clock. A tilde on the face marks a prediction or an upload snapshot displayed before clock validity is known; unavailable information remains `--`. The watch derives display time from RTC UTC plus the offset and next daylight-saving transition supplied with weather. Stored coverage is not extended when the publisher stops.
+The Weather header displays the data's fetch time as `Updated MM/DD/YY HH:MM:SS`. It does not substitute the running clock. A tilde on the face marks a prediction or an upload snapshot displayed before clock validity is known; unavailable information remains `--`. The watch derives display time from RTC UTC plus the offset and next daylight-saving transition supplied with weather. Stored coverage is not extended when the PC server stops.
 
-Follow [relay/README.md](relay/README.md) to install ntfy on the iPhone, enable its Notification Center alerts and previews, pair the watch and allow system-notification sharing. [relay/publisher/README.md](relay/publisher/README.md) supplies Windows setup commands and direct Python commands for macOS and Linux. [prepare_pc.ps1](relay/publisher/prepare_pc.ps1) stores the private channel, [run_pc.ps1](relay/publisher/run_pc.ps1) launches the publisher, and [schedule_pc.ps1](relay/publisher/schedule_pc.ps1) registers its Windows task. That task attempts a weather update every 15 minutes while the computer stays awake, online and signed in. The foreground loop in [publisher.py](relay/publisher/publisher.py) also targets 900-second intervals; macOS and Linux service installers are not included.
+Install [Bluefy](https://apps.apple.com/us/app/bluefy-web-ble-browser/id1492822055) and [Tailscale](https://tailscale.com/download) on the iPhone, and install Tailscale on the PC. Connect both devices to the same personal Tailscale network. The [relay setup guide](relay/browser/README.md) covers account sign-in, HTTPS approval, source configuration and connection recovery. Bluefy provides the browser Bluetooth interface; Tailscale carries HTTPS between the phone and PC. The PC can remain at home while the phone stays within Bluetooth range of the watch.
 
-The PC needs no Bluetooth connection or proximity to the watch. The iPhone needs internet access and Bluetooth range to the watch. A 192-byte XWR weather message passed through the iPhone with matching publisher and watch acceptance metadata on October 19, 2026. Locked-phone delivery passed with the earlier JSON envelope; the binary test did not record the phone's lock state. The schedule does not guarantee push arrival times and unlocking the phone does not trigger an extra refresh. `publisher.py` calls `binary_protocol.py` to convert source JSON to typed binary values and wrap each packet in Base64 for notification text. Generic topics replace a bounded cache rather than creating applications automatically. [relay/PROTOCOL.md](relay/PROTOCOL.md) documents the format, parsers and compatibility path.
+From the repository root on Windows, start the weather server with [manage_pc.ps1](relay/browser/manage_pc.ps1), then configure the private HTTPS proxy. The manager uses the installed PlatformIO Python, runs the server hidden and preserves its access token across restarts. Tailscale may open an account approval page before enabling HTTPS.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\relay\browser\manage_pc.ps1 -Action Start
+& "$env:ProgramFiles\Tailscale\tailscale.exe" serve --bg http://127.0.0.1:8765
+& "$env:ProgramFiles\Tailscale\tailscale.exe" serve status
+```
+
+On macOS or Linux, run [server.py](relay/browser/server.py) in a terminal with Python 3.9 or newer. Leave that process running and configure Tailscale Serve from another terminal. The `tailscale` command must resolve to the installed Tailscale CLI; the [browser guide](relay/browser/README.md) includes the macOS application-bundle path where needed.
+
+```sh
+python3 -B relay/browser/server.py --host 127.0.0.1 --port 8765 --weather
+```
+
+```sh
+tailscale serve --bg http://127.0.0.1:8765
+tailscale serve status
+```
+
+Open the HTTPS address reported by Serve in Bluefy while the iPhone's Tailscale connection is enabled. Read `relay/browser/.local/access_token.txt` locally on the PC, enter its value in the page and tap Use token. Tap Connect watch or Reconnect watch and select XIAO Watch when prompted. The page retains the token in memory only, so enter it again after a reload. Applied means the watch accepted a new topic sequence; Already accepted means it returned a duplicate acknowledgement for that sequence. Keep the saved iPhone pairing. Reconnect watch reuses the permitted device, while Choose watch requests a new selection.
+
+[server.py](relay/browser/server.py) fetches weather or generic JSON immediately and then every 900 seconds. [relay_client.js](relay/browser/relay_client.js) checks the authenticated snapshot every 30 seconds while visible and again on resume. The PC must remain awake and online. Dependable delivery requires the Bluefy relay page to stay active; locking the phone or switching apps can suspend it. Unlocking while using another app does not trigger this page. The server's snapshot expires after 900 seconds without a valid refresh, and unsuccessful transfers do not extend the forecast.
+
+After restarting Windows, sign in, ensure Tailscale is connected and run the same `manage_pc.ps1 -Action Start` command. Check it with `-Action Status`. The manager does not install a startup task. [Tailscale Serve with `--bg`](https://tailscale.com/docs/reference/tailscale-cli/serve#effects-of-rebooting-and-restarting) preserves the proxy configuration across restarts, but it does not start the Python server. macOS and Linux also require restarting `server.py` unless a separate service has been configured. Return to the relay page in Bluefy and reconnect as needed.
+
+A 192-byte weather packet reached the watch through Bluefy on October 20, 2026, with matching server and watch sequence, 24 hourly records and seven daily records. The next scheduled PC snapshot also reached the watch. A subsequent page reload and Disconnect/Reconnect both passed with the iPhone pairing intact. Those connection checks preceded removal of the unused notification receiver. The replacement firmware subsequently built and uploaded with fresh weather, and USB provisioning verified an advancing RTC. Bluefy subsequently accepted weather on that firmware after reconnection with the saved pairing. USB diagnostics matched the server sequence `1792546424`, with 24 hourly records and seven daily records. Long-duration delivery and locked-phone operation remain unverified.
 
 ### Relay format and parser use
 
-[publisher.py](relay/publisher/publisher.py) defaults to XWR v1 and calls [binary_protocol.py](relay/publisher/binary_protocol.py) to encode notifications. JSON remains an input format for files and HTTPS sources, while the notification body contains `XW1:` followed by canonical Base64 of a binary packet. The packet records its version, codec, UTC sequence, topic, lengths and CRC32. `pack_weather()` in `publisher.py` preserves current conditions, 24 hourly records and seven daily summaries. Generic values support null, booleans, signed integers, finite floating-point numbers, UTF-8 text, arrays, string-keyed maps and opaque bytes. Encoding a new topic does not add a watch application; a consumer must read and interpret its cached payload.
+[data_sources.py](relay/data_sources.py) validates JSON from files and HTTPS sources, then calls [binary_protocol.py](relay/binary_protocol.py) to encode XWR v1. Each `XW1:` body contains canonical Base64 of a binary packet with a version, codec, UTC sequence, topic, lengths and CRC32. `pack_weather()` preserves current conditions, 24 hourly records and seven daily summaries. Generic values support null, booleans, signed integers, finite floating-point numbers, UTF-8 text, arrays, string-keyed maps and opaque bytes. Encoding a new topic does not add an application; a consumer must interpret the cached payload.
 
 | Layer | Size and purpose |
 | --- | --- |
-| Source JSON has a separate input bound. | The publisher reads at most 256 KiB from a file or HTTPS response before validating and encoding the content. That bound does not describe a notification's capacity. |
+| Source JSON has a separate input bound. | The source reader accepts at most 256 KiB from a file or HTTPS response before validating and encoding the content. That bound does not describe Bluetooth packet capacity. |
 | An XWR packet contains metadata and data. | The complete decoded packet fits within 189 bytes. Its header and CRC occupy 15 bytes, so a generic payload has at most `174 - topic_length` encoded bytes, including its type and length fields. |
-| Notification text carries one packet. | The complete `XW1:` body fits within 256 ASCII bytes on the tested phone path. The implementation does not split oversized payloads across notifications. |
-| Weather uses a dedicated representation. | Its 118-byte payload produces a 140-byte packet and a 192-byte notification, compared with the legacy 240-byte JSON envelope. |
+| Text framing carries one packet. | The current XWR implementation caps its complete `XW1:` body at 256 ASCII bytes. The browser adds LF and splits that frame into acknowledged writes of at most 20 bytes. It does not split oversized data into multiple XWR packets. |
+| Weather uses a dedicated representation. | Its 118-byte payload produces a 140-byte packet and a 192-byte text body before LF. |
 
-The Python parser [binary_protocol.py](relay/publisher/binary_protocol.py) can inspect a saved body without publishing or connecting to the watch. From the repository root, replace `message.txt` with a file containing one `XW1:` body and run the appropriate command below. The command prints a JSON diagnostic representation of the decoded packet; that output does not change the binary wire format. Add `--raw` when the input file contains raw packet bytes instead of Base64 text.
+The Python parser [binary_protocol.py](relay/binary_protocol.py) can inspect a saved body without publishing or connecting to the watch. From the repository root, replace `message.txt` with a file containing one `XW1:` body and run the appropriate command below. The command prints a JSON diagnostic representation of the decoded packet; that output does not change the binary wire format. Add `--raw` when the input file contains raw packet bytes instead of Base64 text.
 
 ```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\python.exe" -B relay/publisher/binary_protocol.py message.txt
+& "$env:USERPROFILE\.platformio\penv\Scripts\python.exe" -B relay/binary_protocol.py message.txt
 ```
 
 ```bash
-"$HOME/.platformio/penv/bin/python" -B relay/publisher/binary_protocol.py message.txt
+"$HOME/.platformio/penv/bin/python" -B relay/binary_protocol.py message.txt
 ```
 
-[relay/PROTOCOL.md](relay/PROTOCOL.md) supplies encoder examples, a reproducible test vector and the C++ APIs declared in [binary_protocol.h](project/include/binary_protocol.h). [binary_protocol.cpp](project/src/binary_protocol.cpp) checks lengths, types, Base64 and CRC. [phone_protocol.cpp](project/src/phone_protocol.cpp) validates sequence history and weather semantics, while [notification_protocol.cpp](project/src/notification_protocol.cpp) adds notification freshness checks. CRC detects accidental corruption; it does not authenticate a sender. The `--wire-format json` option in `publisher.py` and `-WireFormat json` option in `run_pc.ps1` support older firmware during migration. Nordic UART also accepts XWR text followed by a newline, while its acknowledgements and polls remain JSON. [manual_protocol.cpp](project/src/manual_protocol.cpp) retains LightBlue's separate short command format.
+[relay/PROTOCOL.md](relay/PROTOCOL.md) supplies encoder examples, a reproducible test vector and the C++ APIs declared in [binary_protocol.h](project/include/binary_protocol.h). [binary_protocol.cpp](project/src/binary_protocol.cpp) checks lengths, types, Base64 and CRC. [phone_protocol.cpp](project/src/phone_protocol.cpp) validates sequence history and weather semantics. The server and browser enforce a 900-second age limit and reject packets more than 300 seconds ahead; the UART parser does not apply that transport freshness policy itself. CRC detects accidental corruption and does not authenticate a sender. Nordic UART accepts XWR text or diagnostic JSON followed by LF, and its acknowledgements and polls remain JSON. [manual_protocol.cpp](project/src/manual_protocol.cpp) retains the separate short LightBlue command format.
 
 ### Diagnostics and recovery
 
@@ -133,11 +158,11 @@ Use the following command to open a serial monitor, adding the actual `--port` v
 pio device monitor --baud 115200
 ```
 
-Inspect RTC trust, loop progress, completed display flushes, touch recovery counters and ANCS application counters in the report emitted by [main.cpp](project/src/main.cpp). A successful build establishes compilation, a successful upload establishes programming, and an accepted notification establishes data delivery. [project/README.md](project/README.md#usb-diagnostics) describes the USB fields, while [project/LIGHTBLUE.md](project/LIGHTBLUE.md) covers optional manual settings, weather and transport checks. Bluetooth time-setting commands are absent.
+Inspect RTC trust, loop progress, completed display flushes, touch recovery counters and `RELAY` state in the report emitted by [main.cpp](project/src/main.cpp). A successful build establishes compilation, an upload establishes programming, and a matching application acknowledgement establishes accepted data. [project/README.md](project/README.md#usb-diagnostics) describes the USB fields, while [project/LIGHTBLUE.md](project/LIGHTBLUE.md) covers optional manual settings, weather and transport checks. Bluetooth time-setting commands are absent.
 
-For an XWR delivery, compare the sequence, `body_bytes` and `body_hash` logged by `publisher.py` with the watch's relay sequence, body length and fingerprint emitted by `main.cpp`, then check `applied`, `rejected` and the weather record counts. [notification_frame.cpp](project/src/notification_frame.cpp) computes the receiver's FNV-1a fingerprint for matching diagnostic reports; it is separate from the packet's CRC32. `binary_v=1` reports decoder support. `generic_format` describes the generic cache and may remain `json` after a weather update, because weather updates the weather model rather than that cache. An HTTP acknowledgement from ntfy or an ANCS subscription alone does not establish watch-side acceptance.
+For an XWR delivery, compare the topic and sequence shown by the relay page with `RELAY topic` and `seq` from [main.cpp](project/src/main.cpp), then check `WEATHER hours`, `days` and `fetched_utc`. Applied increments the relay revision; Already accepted leaves the previously applied data unchanged. `binary_v=1` reports decoder support. `generic_format` describes the generic cache and may remain `json` after a weather update, because weather uses its dedicated model. An HTTPS response or a connected Bluetooth link alone does not establish application acceptance.
 
-If the face turns black without visibly dimming, check KE switch 2. If `SET RTC` appears, close the monitor and run `project/tools/sync_rtc.py` using the command above. If notifications reach the phone but weather does not change, check Notification Center, `Show Previews: Always` and `Share System Notifications`, then compare the sequence and fingerprint logged by `publisher.py` with the acceptance diagnostics emitted by `main.cpp`. After an upload, the phone may need to reconnect; remove and recreate the bond only when ordinary reconnection fails.
+If the face turns black without visibly dimming, check KE switch 2. If `SET RTC` appears, close the monitor and run [sync_rtc.py](project/tools/sync_rtc.py). If weather stops updating, check the PC process with `manage_pc.ps1 -Action Status`, confirm that Tailscale is connected on both devices and return to the relay page in Bluefy. Use Reconnect watch before trying fresh discovery. The page can reuse an authorized watch even when iOS retains its physical Bluetooth connection; routine reconnection does not require forgetting the pairing.
 
 ### Board adaptation
 
@@ -148,7 +173,7 @@ Seeed's [Round Display compatibility documentation](https://wiki.seeedstudio.com
 | XIAO nRF52840 Sense | The configured board has been compiled, uploaded and exercised with the Round Display. | The existing environment uses its onboard LSM6DS3TR-C and application USB PID `8045`. |
 | XIAO nRF52840 without Sense | The same processor and connector make it a porting candidate; this project has not validated it. | The board lacks the Sense IMU, so [orientation_sensor.cpp](project/src/orientation_sensor.cpp) must be disabled or adapted. Its application PID is `8044`, which `sync_rtc.py` currently rejects. |
 | Another nRF52840 board | The processor provides related peripherals, but no alternative board environment is supplied. | Adapt pin mapping, bootloader/SoftDevice layout, the Adafruit-derived core dependencies, external display wiring, battery measurement and USB discovery. |
-| A Bluetooth-capable XIAO using another processor | Connector compatibility does not provide compatible Nordic drivers or Bluefruit APIs. | Replace the Nordic hardware layer and ANCS/BLE integration, then adapt task scheduling, USB and memory configuration. |
+| A Bluetooth-capable XIAO using another processor | Connector compatibility does not provide compatible Nordic drivers or Bluefruit APIs. | Replace the Nordic hardware layer and BLE integration, then adapt task scheduling, USB and memory configuration. |
 | A XIAO without an onboard Bluetooth radio | The current iPhone relay has no radio path on that board. | Add a compatible Bluetooth subsystem or implement another data transport, and port the hardware layer. A smaller-memory board may also require a reduced interface and data model. |
 
 Create a separate PlatformIO environment for a port and retain the existing environment as the reference. Select the actual board's platform, core and upload protocol before changing pins. The current Seeed platform exposes `seeed-xiao-afruitnrf52-nrf52840` for the non-Sense variant, but selecting that identifier alone does not adapt the sensor or RTC discovery. Never upload the existing Sense binary to a different board merely because both use an nRF52840.
@@ -157,9 +182,9 @@ Map the Round Display signals from the target schematic into [platformio.ini](pr
 
 Adapt [board_support.cpp](project/src/board_support.cpp), [orientation_sensor.cpp](project/src/orientation_sensor.cpp), [backlight.cpp](project/src/backlight.cpp) and [display_transport.cpp](project/src/display_transport.cpp) to the target peripheral ownership and ADC/PWM APIs. The current touch driver uses TWIM0, the IMU driver uses TWIM1, and the display uses the selected core's SPIM3 path. Sense-specific internal pins and sensor power drive must not be copied to unrelated hardware. An external orientation sensor requires a verified screen-normal axis and sign before applying the existing thresholds.
 
-Preserve or replace the Bluefruit/SoftDevice, FreeRTOS and TinyUSB interfaces used by [main.cpp](project/src/main.cpp), [manual_bluetooth.cpp](project/src/manual_bluetooth.cpp) and [notification_relay.cpp](project/src/notification_relay.cpp). An Arduino framework choice by itself does not supply these APIs. Update the USB identity checks in [sync_rtc.py](project/tools/sync_rtc.py) for the new application identity, retaining the distinction from its bootloader. The October 19 binary-protocol build reports 114,732 bytes of static RAM and 660,088 bytes of application flash; the linker report does not measure peak runtime memory. Smaller targets require memory work before the same interface can fit.
+Preserve or replace the Bluefruit/SoftDevice, FreeRTOS and TinyUSB interfaces used by [main.cpp](project/src/main.cpp), [manual_bluetooth.cpp](project/src/manual_bluetooth.cpp). An Arduino framework choice by itself does not supply these APIs. Update the USB identity checks in [sync_rtc.py](project/tools/sync_rtc.py) for the new application identity, retaining the distinction from its bootloader. The October 20 browser-relay upload build reports 100,964 bytes of static RAM and 649,612 bytes of application flash; the linker report does not measure peak runtime memory. Smaller targets require memory work before the same interface can fit.
 
-Build the new environment before attempting an upload, then verify display colors, touch coordinates, return navigation, RTC readback and ticking, sensor failure handling, PWM dimming and notification acceptance on that hardware. Check battery scaling against a meter and verify RTC backup retention with the actual power arrangement. No alternative board or host operating system has passed those project-specific hardware checks yet.
+Build the new environment before attempting an upload, then verify display colors, touch coordinates, return navigation, RTC readback and ticking, sensor failure handling, PWM dimming and XWR application acceptance on that hardware. Check battery scaling against a meter and verify RTC backup retention with the actual power arrangement. No alternative board or host operating system has passed those project-specific hardware checks yet.
 
 ## Implementation
 
@@ -241,45 +266,41 @@ flowchart LR
 | Implementation | Function and boundary | Source |
 | --- | --- | --- |
 | Upload embeds a fallback. | Upload targets require a fresh validated fetch; plain builds may reuse the cache without changing its timestamp. Reboot restores the embedded snapshot. | [platformio_weather.py](project/tools/platformio_weather.py) calls [upload_weather.py](project/tools/upload_weather.py). |
-| The publisher sends binary relay packets. | A file, an HTTPS JSON source or the weather adapter supplies a versioned XWR packet with a topic, sequence, codec and CRC32. Base64 transport text stays within the observed 256-byte notification limit. | [publisher.py](relay/publisher/publisher.py) validates and publishes, while [binary_protocol.py](relay/publisher/binary_protocol.py) encodes and parses. |
-| Compact weather preserves the forecast. | Its 118-byte payload occupies a 140-byte packet and 192-byte notification, compared with the earlier 240-byte JSON envelope. Decoding preserves temperatures in tenths, WMO codes and time metadata. | [packed_weather.cpp](project/src/packed_weather.cpp) decodes the weather adapter. |
-| ANCS retrieves matching notification content. | The bonded receiver filters the ntfy app and exact title, queues bounded data and applies accepted payloads in the watch task. | [notification_relay.cpp](project/src/notification_relay.cpp), [notification_frame.cpp](project/src/notification_frame.cpp) and [notification_protocol.cpp](project/src/notification_protocol.cpp) handle delivery. |
-| Binary parsers expose typed data. | Python encodes and decodes XWR packets. The allocation-free C++ structural parser exposes views into the caller's buffers; those buffers must remain alive and unchanged while the views are used. | [binary_protocol.py](relay/publisher/binary_protocol.py), [binary_protocol.h](project/include/binary_protocol.h) and [binary_protocol.cpp](project/src/binary_protocol.cpp) define the format and APIs. |
-| Application validation protects existing state. | Rejected input leaves the model and sequence history unchanged. Notification history retains eight topics until reboot; diagnostic UART history resets on reconnect. Unknown topics share one latest cache with an explicit encoding field. Weather reuses the bounded ArduinoJson semantic-validation path. | [notification_protocol.cpp](project/src/notification_protocol.cpp), [strict_json.cpp](project/src/strict_json.cpp) and [phone_protocol.cpp](project/src/phone_protocol.cpp) validate and apply data. |
-| Optional BLE diagnostics retain another transport. | Nordic UART accepts newline-framed XWR or legacy JSON and returns JSON acknowledgements; a small manual service supports LightBlue settings and weather commands. Neither sets RTC time. | [relay_schedule.h](project/include/relay_schedule.h), [manual_protocol.cpp](project/src/manual_protocol.cpp) and [manual_bluetooth.cpp](project/src/manual_bluetooth.cpp) support diagnostics. |
+| The source adapter encodes relay packets. | A file, an HTTPS JSON source or the weather adapter supplies an XWR packet with a topic, sequence, codec and CRC32. | [data_sources.py](relay/data_sources.py) validates inputs, while [binary_protocol.py](relay/binary_protocol.py) encodes and parses. |
+| Compact weather preserves the forecast. | Its 118-byte payload occupies a 140-byte packet and 192-byte text body. Decoding preserves temperatures in tenths, WMO codes and time metadata. | [packed_weather.cpp](project/src/packed_weather.cpp) decodes weather. |
+| The PC exposes an authenticated snapshot. | Sources refresh as one validated batch every 900 seconds, and expired data is unavailable for new delivery. Tailscale Serve provides private HTTPS to the loopback server. | [server.py](relay/browser/server.py) owns the snapshot and endpoint. |
+| Bluefy forwards packets over Bluetooth. | The active page checks for updates, sends bounded UART writes and requires a matching application acknowledgement. Saved-device recovery preserves the iPhone pairing. | [relay_client.js](relay/browser/relay_client.js) and [relay_protocol.js](relay/browser/relay_protocol.js) implement delivery. |
+| Binary parsers expose typed data. | Python encodes and decodes packets. The allocation-free C++ parser exposes views into caller-owned buffers that must remain alive and unchanged. | [binary_protocol.py](relay/binary_protocol.py), [binary_protocol.h](project/include/binary_protocol.h) and [binary_protocol.cpp](project/src/binary_protocol.cpp) define the APIs. |
+| Application validation protects existing state. | Rejected input preserves the model and sequence history. History tracks eight topics per physical BLE connection; unknown topics share one latest-payload cache with an explicit encoding field. | [strict_json.cpp](project/src/strict_json.cpp) and [phone_protocol.cpp](project/src/phone_protocol.cpp) validate and apply data. |
+| Manual diagnostics support short commands. | LightBlue can select units and stage weather through a separate service. Neither that service nor Nordic UART sets RTC time. | [manual_protocol.cpp](project/src/manual_protocol.cpp) and [manual_bluetooth.cpp](project/src/manual_bluetooth.cpp) handle manual commands. |
 
 ```mermaid
 flowchart TD
-    Source["HTTPS weather or generic JSON"] --> Publisher["publisher.py"]
-    Publisher --> Encode["XWR v1 packet and CRC32"]
-    Encode --> Text["XW1: and canonical Base64"]
-    Text --> Ntfy["ntfy notification service"]
-    Ntfy --> Phone["Existing ntfy iPhone app"]
-    Phone --> ANCS["Bluetooth ANCS"]
-    ANCS --> Receiver["notification_relay.cpp"]
-    Receiver --> Notification["notification_protocol.cpp freshness checks"]
-    Notification --> Validation["Packet, sequence and payload validation"]
-    Validation --> Model["Watch state"]
-    Weather["Upload-time weather fetch"] --> Header["Generated upload_weather_data.h"]
-    Header --> Boot["Boot fallback"]
-    Boot --> Model
-    Diagnostic["Optional NUS XWR or JSON"] --> Validation
-    Manual["Manual BLE commands"] --> ManualParser["manual_protocol.cpp"]
+    Source["HTTPS weather or local/HTTPS JSON"] --> Adapter["data_sources.py and binary_protocol.py"]
+    Adapter --> Server["server.py snapshot cache"]
+    Server -->|Private HTTPS through Tailscale Serve| Browser["Bluefy relay_client.js"]
+    Browser -->|XWR text plus LF| NUS["main.cpp Nordic UART receiver"]
+    NUS --> Parser["binary_protocol.cpp and phone_protocol.cpp"]
+    Parser -->|Matching JSON ACK| Browser
+    Parser --> Model["Watch state"]
+    Upload["upload_weather.py"] --> Header["Generated upload_weather_data.h"]
+    Header -->|Boot fallback| Model
+    Manual["LightBlue commands"] --> ManualParser["manual_protocol.cpp"]
     ManualParser --> Model
-    Model --> UI["Weather views or bounded generic cache"]
+    Model --> UI["Weather views or generic cache"]
 ```
 
 ### Build, rendering and execution
 
-The watch task in [main.cpp](project/src/main.cpp) owns LVGL, the shared model and board-facing operations. Bluetooth callbacks in `main.cpp`, [manual_bluetooth.cpp](project/src/manual_bluetooth.cpp) and [notification_relay.cpp](project/src/notification_relay.cpp) pass bounded work to task context. The USB task in `main.cpp` reports cached status rather than accessing the display or I2C bus concurrently. [display_transport.cpp](project/src/display_transport.cpp) uses the core's SPI implementation to avoid an unrelated vendor DMA wait on SPIM0.
+The watch task in [main.cpp](project/src/main.cpp) owns LVGL, the shared model and board-facing operations. Bluetooth callbacks in `main.cpp` and [manual_bluetooth.cpp](project/src/manual_bluetooth.cpp) pass bounded work to task context. The USB task in `main.cpp` reports cached status rather than accessing the display or I2C bus concurrently. [display_transport.cpp](project/src/display_transport.cpp) uses the core's SPI implementation to avoid an unrelated vendor DMA wait on SPIM0.
 
 | Implementation | Function and boundary | Source |
 | --- | --- | --- |
 | PlatformIO pins the platform and libraries. | The configuration selects the Sense board and retains the five external dependencies shown below. Framework Bluetooth and USB support remain bundled. | [platformio.ini](project/platformio.ini) defines the build. |
 | The display sends partial RGB565 rectangles. | A 4,800-byte buffer feeds blocking TX-only SPI transfers at 8 MHz, with bounds checks and byte-order restoration. | [display_transport.cpp](project/src/display_transport.cpp) handles flushes. |
 | Touch reception has bounded waits. | TWIM0 receives a five-byte report with 10 ms receive and 5 ms STOP deadlines; failed transfers cancel the gesture and attempt bus recovery. | [board_support.cpp](project/src/board_support.cpp) reads touch. |
-| Task ownership separates peripheral access. | The watch task processes hardware and UI work, while USB serves status and queued RTC requests. ANCS work uses a bounded worker and queues. | [main.cpp](project/src/main.cpp) and [notification_relay.cpp](project/src/notification_relay.cpp) coordinate tasks. |
-| USB exposes operating state. | Reports include RTC trust, progress counters, display/touch errors, orientation, backlight and notification acceptance metadata. They omit arbitrary notification bodies. | [main.cpp](project/src/main.cpp) emits diagnostics. |
+| Task ownership separates peripheral access. | The watch task processes hardware and UI work, while USB serves status and queued RTC requests. BLE callbacks queue bounded input. | [main.cpp](project/src/main.cpp) coordinates tasks. |
+| USB exposes operating state. | Reports include RTC trust, progress counters, display/touch errors, orientation, backlight and accepted relay metadata. They omit arbitrary payload bodies. | [main.cpp](project/src/main.cpp) emits diagnostics. |
 
 | Dependency | Pinned selection and purpose |
 | --- | --- |
@@ -301,4 +322,4 @@ flowchart LR
     Status --> USB["USB task"]
 ```
 
-The [changelog](CHANGELOG.md) records dated changes. The [firmware guide](project/README.md), [LightBlue guide](project/LIGHTBLUE.md), [relay guide](relay/README.md), [protocol specification](relay/PROTOCOL.md) and [publisher guide](relay/publisher/README.md) describe the corresponding operating paths in more detail.
+The [changelog](CHANGELOG.md) records dated changes. The [firmware guide](project/README.md), [LightBlue guide](project/LIGHTBLUE.md), [relay guide](relay/README.md), [browser relay guide](relay/browser/README.md) and [protocol specification](relay/PROTOCOL.md) describe the corresponding operating paths in more detail.

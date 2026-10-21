@@ -9,8 +9,6 @@
 #include <lv_xiao_round_screen.h>
 #include "board_support.h"
 #include "phone_protocol.h"
-#include "notification_protocol.h"
-#include "notification_relay.h"
 #include "relay_schedule.h"
 #include "manual_bluetooth.h"
 #include "rtc_usb_protocol.h"
@@ -49,15 +47,9 @@ char pendingAck[256] = {};
 size_t ackLength = 0;
 size_t ackSent = 0;
 uint32_t ackStarted = 0;
-// share the optional NUS stream between ACKs and periodic refresh polls.
+// share the NUS stream between ACKs and periodic refresh polls.
 watch::RelaySchedule relaySchedule;
 uint32_t relayPollsQueued = 0;
-// apply notification payloads only in the watch task, independently of UART sessions.
-watch::ProtocolSession notificationProtocol;
-char notificationFrame[watch::kMaxNotificationJsonBytes + 1] = {};
-uint32_t notificationApplied = 0;
-uint32_t notificationRejected = 0;
-const char* notificationResult = "idle";
 
 // report the current startup phase over USB.
 enum class BootStage : uint8_t {
@@ -86,7 +78,7 @@ struct UsbStatus {
     bool addressKnown = false;
     uint8_t address[6] = {};
     uint8_t addressType = 0;
-    uint8_t bleError = 0;  // 1=stack, 2=UART, 3=advertising, 4=manual, 5=ANCS.
+    uint8_t bleError = 0;  // 1=stack, 2=UART, 3=advertising, 4=manual.
     bool manualReady = false;
     uint32_t manualApplied = 0;
     char manualResult[21] = {};
@@ -106,11 +98,6 @@ struct UsbStatus {
     uint16_t genericPayloadBytes = 0;
     bool genericBinary = false;
     char relayTopic[33] = {};
-    // distinguish ANCS transport progress from accepted relay updates.
-    notificationRelay::Diagnostics notification;
-    uint32_t notificationApplied = 0;
-    uint32_t notificationRejected = 0;
-    const char* notificationResult = "idle";
     // retain single-axis wake, PWM and display-failure diagnostics.
     bool orientationReady = false;
     bool orientationHealthy = false;
@@ -256,11 +243,6 @@ void publishStatus(BootStage stage) {
     next.genericPayloadBytes = state.genericPayloadBytes;
     next.genericBinary = state.genericEncoding == watch::PayloadEncoding::Binary;
     memcpy(next.relayTopic, state.relayTopic, sizeof(next.relayTopic));
-    // read the worker's locked counters before copying watch-owned results.
-    next.notification = notificationRelay::diagnostics();
-    next.notificationApplied = notificationApplied;
-    next.notificationRejected = notificationRejected;
-    next.notificationResult = notificationResult;
     // report sensor freshness separately from requested backlight state.
     next.orientationReady = board::orientationReady();
     next.orientationHealthy = orientationWake.healthy();
@@ -392,8 +374,6 @@ void usbDiagnostics() {
             "MANUAL ready=%u accepted=%lu result=%s\n"
             "WEATHER embedded=%u hours=%u days=%u fetched_utc=%lu\n"
             "RELAY revision=%lu topic=%s seq=%lu received_ms=%lu generic_bytes=%u polls_queued=%lu interval_s=900 binary_v=1 generic_format=%s\n"
-            "ANCS ready=%u secured=%u subscribed=%u received=%lu filtered=%lu errors=%lu dropped=%lu applied=%lu rejected=%lu result=%s stack_free=%lu\n"
-            "ANCS metadata app_filtered=%lu title_filtered=%lu app_length=%u title_length=%u app_hash=%08lX title_hash=%08lX flags=%u reported_length=%u body_length=%u body_hash=%08lX\n"
             "ORIENTATION ready=%u healthy=%u raw_z_mg=%d face_up_mg=%d filtered_mg=%d errors=%lu dim=%u pwm_ready=%u backlight=%u\n"
             "IMU last_failure=%s reg=0x%02X observed=0x%02X detail=0x%08lX\n"
             "DISPLAY max_flush_us=%lu max_render_ms=%lu errors=%lu d6_high_permille=%d\n"
@@ -426,26 +406,6 @@ void usbDiagnostics() {
             static_cast<unsigned>(current.genericPayloadBytes),
             static_cast<unsigned long>(current.relayPollsQueued),
             current.genericBinary ? "binary" : "json",
-            static_cast<unsigned>(current.notification.ready),
-            static_cast<unsigned>(current.notification.secured),
-            static_cast<unsigned>(current.notification.subscribed),
-            static_cast<unsigned long>(current.notification.received),
-            static_cast<unsigned long>(current.notification.filtered),
-            static_cast<unsigned long>(current.notification.errors),
-            static_cast<unsigned long>(current.notification.dropped),
-            static_cast<unsigned long>(current.notificationApplied),
-            static_cast<unsigned long>(current.notificationRejected), current.notificationResult,
-            static_cast<unsigned long>(current.notification.stackFree),
-            static_cast<unsigned long>(current.notification.filteredApp),
-            static_cast<unsigned long>(current.notification.filteredTitle),
-            static_cast<unsigned>(current.notification.lastAppLength),
-            static_cast<unsigned>(current.notification.lastTitleLength),
-            static_cast<unsigned long>(current.notification.lastAppHash),
-            static_cast<unsigned long>(current.notification.lastTitleHash),
-            static_cast<unsigned>(current.notification.lastMetadataFlags),
-            static_cast<unsigned>(current.notification.lastReportedBodyLength),
-            static_cast<unsigned>(current.notification.lastBodyLength),
-            static_cast<unsigned long>(current.notification.lastBodyHash),
             static_cast<unsigned>(current.orientationReady), static_cast<unsigned>(current.orientationHealthy),
             static_cast<int>(current.rawZMilliG), static_cast<int>(current.faceUpMilliG),
             static_cast<int>(current.filteredZMilliG), static_cast<unsigned long>(current.orientationErrors),
@@ -534,9 +494,9 @@ void touchRead(lv_indev_t* input, lv_indev_data_t* data) {
     }
 }
 
-// initialize phone services and advertise the ANCS client.
+// initialize browser relay and manual phone services.
 void startBluetooth() {
-    // ANCS carries ntfy JSON; Nordic UART and LightBlue remain diagnostic transports.
+    // keep the BLE stack available independently of the display.
     Bluefruit.autoConnLed(false);
     bluetoothReady = Bluefruit.begin(1, 0);
     // stop service setup if the BLE stack fails.
@@ -565,20 +525,10 @@ void startBluetooth() {
         diagnosticBleError = 4;
         return;
     }
-    // initialize the notification client before advertising its solicitation UUID.
-    const bool notificationReady = notificationRelay::begin();
-    // solicit iOS ANCS; retain Nordic UART and the device name in scan response.
+    // advertise NUS for browser discovery; keep the name in scan response.
     Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
     Bluefruit.Advertising.addTxPower();
-    // fit the ANCS solicitation in primary advertising, NUS/name in scan response.
-    if (notificationReady && notificationRelay::addSolicitation()) {
-        Bluefruit.ScanResponse.addService(phoneUart);
-    }
-    // retain UART discovery if the notification worker cannot initialize.
-    else {
-        diagnosticBleError = 5;
-        Bluefruit.Advertising.addService(phoneUart);
-    }
+    Bluefruit.Advertising.addService(phoneUart);
     Bluefruit.ScanResponse.addName();
     Bluefruit.Advertising.restartOnDisconnect(true);
     Bluefruit.Advertising.setInterval(160, 800);  // 100ms fast, 500ms slow.
@@ -598,9 +548,9 @@ void closeSession() {
 
 // queue a bounded JSON failure ACK or close a partially written stream.
 void queueError(const char* reason, uint32_t nowMs) {
-    // prevent an error ACK from corrupting an unfinished notification.
+    // prevent an error ACK from corrupting an unfinished NUS frame.
     if (ackSent != 0 && ackSent < ackLength) {
-        // close rather than append a JSON ACK to a partial notification.
+        // close rather than append a JSON ACK to a partial NUS frame.
         closeSession();
         return;
     }
@@ -717,38 +667,6 @@ void receivePhone(uint32_t nowMs) {
         relaySchedule.queued(nowMs);
         ++relayPollsQueued;
     }
-}
-
-// consume one complete ntfy body without allowing callbacks to touch the model.
-void receiveNotification(uint32_t nowMs) {
-    // retain UTC sequencing across reconnects so notification history cannot roll data back.
-    size_t length = 0;
-    uint32_t frameGeneration = 0;
-    // wait for a complete filtered body from the independent BLE worker.
-    if (!notificationRelay::takeFrame(notificationFrame, sizeof(notificationFrame), length, frameGeneration)) return;
-    // stale worker results cannot cross a disconnect or service rediscovery.
-    if (frameGeneration != notificationRelay::generation()) return;
-    // parse into candidates before locking the model/sequence commit.
-    watch::WatchState nextState = state;
-    watch::ProtocolSession nextProtocol = notificationProtocol;
-    const watch::ProtocolResult result = watch::applyNotificationBody(
-        notificationFrame, length, nextProtocol, nextState, nowMs);
-    taskENTER_CRITICAL();
-    const bool intact = frameGeneration == notificationRelay::generation();
-    // commit model/sequence together only while the original ANCS session survives.
-    if (intact) {
-        state = nextState;
-        notificationProtocol = nextProtocol;
-    }
-    taskEXIT_CRITICAL();
-    // discard outcomes from an invalidated ANCS session.
-    if (!intact) return;
-    // retain a static status string for the USB diagnostic snapshot.
-    notificationResult = watch::protocolStatusName(result.status);
-    // report actual application acceptance over USB; ntfy HTTP success is insufficient.
-    if (result.status == watch::ProtocolStatus::Applied) ++notificationApplied;
-    // duplicate deliveries are harmless and do not count as rejected data.
-    else if (result.status != watch::ProtocolStatus::Duplicate) ++notificationRejected;
 }
 
 // measure and smooth the watch battery voltage before estimating percentage.
@@ -880,7 +798,6 @@ void watchTask(void*) {
         processRtcUsb();
         workPhase.store("phone", std::memory_order_relaxed);
         receivePhone(nowMs);
-        receiveNotification(nowMs);
         manualBle::poll(state, nowMs);
         // sample battery voltage every ten seconds.
         if (static_cast<uint32_t>(nowMs - lastBattery) >= 10000) {

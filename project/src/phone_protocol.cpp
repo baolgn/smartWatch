@@ -421,7 +421,7 @@ ProtocolResult ProtocolSession::applyJson(const char* json, size_t length,
         object["payload"].isUnbound() || !payloadLength) return result;
     // normalize weather into existing bounded arrays without touching RTC time.
     if (strcmp(result.topic, "weather") == 0) {
-      // expand compact notifications before reusing the complete weather validator.
+      // expand compact payloads before reusing the complete weather validator.
       const PackedWeatherStatus packed = expandPackedWeather(document, document["payload"]);
       // malformed packing and allocation failure never consume state or sequences.
       if (packed == PackedWeatherStatus::Invalid || packed == PackedWeatherStatus::NoMemory) {

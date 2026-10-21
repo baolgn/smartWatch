@@ -11,7 +11,7 @@ constexpr uint32_t kMinUtc = 946684800UL;   // 2000-01-01; RTC lower limit
 constexpr uint32_t kMaxUtc = 4102444799UL;  // 2099-12-31 23:59:59
 constexpr size_t kForecastHours = 24;
 constexpr size_t kForecastDays = 7;
-// generic diagnostic transport limits; notification envelopes have a smaller cap.
+// bound generic JSON storage; XWR frames use a smaller wire limit.
 constexpr size_t kRelayTopicBytes = 32;
 constexpr size_t kGenericPayloadBytes = 1024;
 

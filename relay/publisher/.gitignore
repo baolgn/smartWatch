@@ -1,4 +1,0 @@
-# keep the random channel and local execution logs out of version control.
-.local/
-# omit generated Python bytecode.
-__pycache__/
